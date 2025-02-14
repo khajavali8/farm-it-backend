@@ -1,3 +1,4 @@
+// controllers/loanController.js
 import Loan from '../models/Loan.js';
 import Transaction from '../models/Transaction.js';
 
@@ -28,12 +29,10 @@ function generateRepaymentSchedule(amount, interestRate, duration) {
 const loanController = {
   async createLoan(req, res) {
     try {
-      const { amount, interestRate, duration } = req.body;
+      const { amount, interestRate, duration, farm } = req.body;
 
       const loan = await Loan.create({
         ...req.body,
-        farmer: req.user.id,
-        status: 'pending',
         repaymentSchedule: generateRepaymentSchedule(amount, interestRate, duration),
       });
 
@@ -45,59 +44,57 @@ const loanController = {
 
   async repayLoan(req, res) {
     try {
-        const { amount } = req.body;
-        const loan = await Loan.findById(req.params.id).populate('farmer');
-
-        if (!loan) {
-            return res.status(404).json({ message: "Loan not found" });
+      const { amount } = req.body;
+      const loan = await Loan.findById(req.params.id);
+  
+      if (!loan) {
+        return res.status(404).json({ message: "Loan not found" });
+      }
+  
+      if (!loan.amountPaid) {
+        loan.amountPaid = 0;
+      }
+  
+      let newAmountPaid = amount;
+      const totalAmount = loan.amount + (loan.amount * loan.interestRate / 100);
+  
+      loan.amountPaid += newAmountPaid;
+  
+      for (let payment of loan.repaymentSchedule) {
+        if (payment.status === "pending" && newAmountPaid >= payment.amount) {
+          payment.status = "paid";
+          newAmountPaid -= payment.amount;
         }
-
-        if (!loan.farmer) {
-            return res.status(400).json({ message: "Loan farmer is missing in database" });
-        }
-
-        if (loan.farmer._id.toString() !== req.user.id) {
-            return res.status(403).json({ message: "Not authorized to repay this loan" });
-        }
-
-        if (!loan.amountPaid) {
-            loan.amountPaid = 0;
-        }
-
-        let newAmountPaid = amount;
-        const totalAmount = loan.amount + (loan.amount * loan.interestRate / 100);
-
-        loan.amountPaid += newAmountPaid;
-
-        for (let payment of loan.repaymentSchedule) {
-            if (payment.status === "pending" && newAmountPaid >= payment.amount) {
-                payment.status = "paid";
-                newAmountPaid -= payment.amount;
-            }
-        }
-
-        if (loan.amountPaid >= totalAmount) {
-            loan.status = 'completed';
-        }
-
-        await loan.save();
-
-        const transaction = await Transaction.create({
-            loan: loan._id,
-            from: req.user.id, 
-            to: loan.farmer._id, 
-            amount: req.body.amount,
-            type: "repayment",
-            date: new Date(),
-        });
-
-        res.status(200).json({ message: "Loan repaid successfully", loan, transaction });
+      }
+  
+      if (loan.amountPaid >= totalAmount) {
+        loan.status = 'completed';
+      }
+  
+      await loan.save();
+  
+      const recipient = loan.investors.length > 0 ? loan.investors[0].investor : null;
+  
+      if (!recipient) {
+        return res.status(400).json({ message: "No investor found to repay" });
+      }
+  
+      const transaction = await Transaction.create({
+        loan: loan._id,
+        from: req.user.id,
+        to: recipient,
+        amount: req.body.amount,
+        type: "repayment",
+        date: new Date(),
+      });
+  
+      res.status(200).json({ message: "Loan repaid successfully", loan, transaction });
     } catch (error) {
-        console.error("Repay loan error:", error);
-        res.status(500).json({ message: "Server error", error: error.message });
+      console.error("Repay loan error:", error);
+      res.status(500).json({ message: "Server error", error: error.message });
     }
-},
-
+  },
+  
 
   async getRepaymentSchedule(req, res) {
     try {
@@ -114,7 +111,7 @@ const loanController = {
 
   async getMyLoans(req, res) {
     try {
-      const loans = await Loan.find({ farmer: req.user.id });
+      const loans = await Loan.find();
       res.json(loans);
     } catch (error) {
       res.status(500).json({ message: "Server error", error: error.message });
@@ -123,7 +120,7 @@ const loanController = {
 
   async getMyInvestments(req, res) {
     try {
-      const investments = await Loan.find({ investors: req.user.id });
+      const investments = await Loan.find({ 'investors.investor': req.user.id });
       res.json(investments);
     } catch (error) {
       res.status(500).json({ message: "Server error", error: error.message });
@@ -141,13 +138,19 @@ const loanController = {
 
   async investInLoan(req, res) {
     try {
+      const { amount } = req.body;
       const loan = await Loan.findById(req.params.id);
 
       if (!loan) {
         return res.status(404).json({ message: "Loan not found" });
       }
 
-      loan.investors.push(req.user.id);
+      loan.investors.push({
+        investor: req.user.id,
+        amount,
+        date: new Date()
+      });
+
       await loan.save();
 
       res.json({ message: "Investment successful", loan });
