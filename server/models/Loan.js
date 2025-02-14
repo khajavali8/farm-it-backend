@@ -6,11 +6,6 @@ const loanSchema = new mongoose.Schema({
     ref: 'Farm',
     required: true,
   },
-  farmer: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',  
-    required: true
-  },
   amount: {
     type: Number,
     required: true,
