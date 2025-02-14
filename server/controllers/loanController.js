@@ -1,4 +1,3 @@
-// controllers/loanController.js
 import Loan from '../models/Loan.js';
 import Transaction from '../models/Transaction.js';
 
@@ -140,24 +139,42 @@ const loanController = {
     try {
       const { amount } = req.body;
       const loan = await Loan.findById(req.params.id);
-
+  
       if (!loan) {
         return res.status(404).json({ message: "Loan not found" });
       }
-
+  
+      // Add investor to the loan
       loan.investors.push({
         investor: req.user.id,
         amount,
         date: new Date()
       });
-
+  
       await loan.save();
-
-      res.json({ message: "Investment successful", loan });
+  
+      //Store Investment History in Transactions
+      const transaction = await Transaction.create({
+        loan: loan._id,
+        from: req.user.id,          // Investor
+        to: loan.farm,             // Associated Farm
+        amount: amount,
+        type: "investment",
+        date: new Date(),
+      });
+  
+      res.json({
+        message: "Investment successful",
+        loan,
+        transaction,  // Return transaction record as well
+      });
     } catch (error) {
+      console.error("Invest in loan error:", error);
       res.status(500).json({ message: "Server error", error: error.message });
     }
   },
+  
+  
 };
 
 export default loanController;
